@@ -2,6 +2,8 @@ import { Server, Socket } from 'socket.io';
 import RoomService, { DisconnectResultData, JoinRoomResultData } from '../application/RoomService';
 import ResponseUtil, { ApiResponse } from '../utils/ResponseUtil';
 import GameService from '../application/GameService';
+import CoinGameService from '../application/CoinGameService';
+import { activeRooms } from '../application/RoomStore';
 import logger from '../utils/Logger';
 
 export default (io: Server, socket: Socket) => {
@@ -17,10 +19,27 @@ export default (io: Server, socket: Socket) => {
         socket.data.roomCode = roomCode;
     };
 
+    // The snapshot is the one room-level payload whose shape is mode-specific:
+    // coin mode carries piles, settings, items and two views of a wallet. The
+    // event name stays shared because only one mode's handler is ever bound on
+    // the client.
     const sendRoomSnapshot = (roomCode: string, playerId: string, isSpectator: boolean) => {
-        const snapshot = GameService.buildRoomSnapshot(roomCode, playerId, isSpectator);
+        const isCoin = activeRooms[roomCode]?.gameMode === 'coin';
+        const snapshot = isCoin
+            ? CoinGameService.buildRoomSnapshot(roomCode, playerId, isSpectator)
+            : GameService.buildRoomSnapshot(roomCode, playerId, isSpectator);
         if (!snapshot) return;
         socket.emit('roomSnapshot', ResponseUtil.success({ data: snapshot }));
+    };
+
+    // Losing or regaining a player can complete -- or undo -- a phase's
+    // early-exit gate. Which gates exist is a mode question.
+    const checkGameProgression = (roomCode: string) => {
+        if (activeRooms[roomCode]?.gameMode === 'coin') {
+            CoinGameService.checkGameProgression(roomCode);
+        } else {
+            GameService.checkGameProgression(roomCode);
+        }
     };
 
     // --- HELPER FUNCTION: Broadcasts the result of someone leaving/disconnecting ---
@@ -58,7 +77,7 @@ export default (io: Server, socket: Socket) => {
 
             // Losing a player can complete "all connected-living have acted".
             // It can never end the game -- they're still alive on the board.
-            GameService.checkGameProgression(roomCode);
+            checkGameProgression(roomCode);
         }
     };
 
@@ -208,7 +227,7 @@ export default (io: Server, socket: Socket) => {
 
                 // Their return can just as easily *undo* an early exit as
                 // complete one, so re-evaluate rather than assume.
-                GameService.checkGameProgression(roomCode);
+                checkGameProgression(roomCode);
                 break;
         }
     });

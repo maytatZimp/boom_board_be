@@ -1,5 +1,6 @@
 import logger from '../../utils/Logger';
 import Board from '../models/Board';
+import { RoomActionLog, RoomEngine } from './RoomEngine';
 import PlayerEntity from '../models/PlayerEntity';
 import SpectatorEntity from '../models/SpectatorEntity';
 
@@ -133,6 +134,12 @@ class SimpleModeEngine {
         }
         this.players.push(player);
         return true;
+    }
+
+    // The room layer is mode-agnostic and cannot construct a PlayerEntity
+    // itself, so it asks the engine for a player instead.
+    addNewPlayer(id: string, name: string, secret: string): boolean {
+        return this.addPlayer(new PlayerEntity(id, name, secret));
     }
 
     addSpectator(spectator: SpectatorEntity): boolean {
@@ -361,6 +368,12 @@ class SimpleModeEngine {
         return newLog;
     }
 
+    // The one log entry the room layer writes itself; it names the entry, the
+    // engine owns what that name means.
+    logPlayerDisconnected(playerId: string, playerName: string): RoomActionLog {
+        return this.addLog('PLAYER_DISCONNECTED', { playerId, playerName } as PlayerDisconnectedData);
+    }
+
     // Function for service.
     setPlayerPosition(playerId: string, startX: number, startY: number): EngineResult<EngineEventData, SetPositionErrorType> {
         if (this.state !== 'position') return { success: false, error: 'WRONG_PHASE' };
@@ -440,5 +453,11 @@ class SimpleModeEngine {
         return { x: winnerPlayer.x, y: winnerPlayer.y };
     }
 }
+
+// Compile-time proof that the engine still satisfies what the room layer needs.
+// If a future edit breaks the contract this fails here rather than at a call
+// site in RoomService.
+const _contract: RoomEngine = null as unknown as SimpleModeEngine;
+void _contract;
 
 export default SimpleModeEngine;

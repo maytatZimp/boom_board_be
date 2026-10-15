@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
-import RoomService from '../application/RoomService';
 import GameService, { PHASE_TIME_LIMIT_SECONDS } from '../application/GameService';
+import { getSimpleRoom } from '../application/RoomStore';
 import ResponseUtil, { ApiResponse } from '../utils/ResponseUtil';
 
 
@@ -20,7 +20,7 @@ export default (io: Server, socket: Socket) => {
         }
 
         const roomCode = data.roomCode.toUpperCase();
-        const room = RoomService.getRoom(roomCode);
+        const room = getSimpleRoom(roomCode);
 
         if (!room) {
             if (callback) callback(ResponseUtil.notFound({ errorType: 'ROOM_NOT_FOUND' }));
@@ -156,7 +156,7 @@ export default (io: Server, socket: Socket) => {
 
         const roomCode = data.roomCode.toUpperCase();
 
-        const room = RoomService.getRoom(roomCode);
+        const room = getSimpleRoom(roomCode);
         if (!room) {
             if (callback) callback(ResponseUtil.notFound({ errorType: 'ROOM_NOT_FOUND' }));
             return;

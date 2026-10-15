@@ -1,11 +1,21 @@
-import PlayerEntity from '../domain/models/PlayerEntity';
 import SpectatorEntity from '../domain/models/SpectatorEntity';
-import SimpleModeEngine, { ActionLog, PlayerDisconnectedData, PlayerModel, SpectatorModel } from '../domain/modes/SimpleModeEngine';
+import CoinModeEngine from '../domain/modes/CoinModeEngine';
+import { RoomActionLog, RoomEngine } from '../domain/modes/RoomEngine';
+import SimpleModeEngine from '../domain/modes/SimpleModeEngine';
 import { generatePlayerId, generateSecret } from '../utils/Identity';
+import { generateRoomCode } from './RoomCode';
 import { GameMode, Room, activeRooms, playerSocketTracker, socketTracker } from './RoomStore';
 
 export type JoinRoomErrorType = 'ROOM_NOT_FOUND' | 'ROOM_IS_FULL' | 'ROOM_IS_FULL_OF_SPECTATORS' | 'INVALID_PLAYER_NAME' | 'SECRET_MISMATCH';
 export type CreateRoomErrorType = 'SERVER_CAPACITY_REACHED' | 'INVALID_MODE' | 'INVALID_PLAYER_NAME';
+
+const SUPPORTED_MODES: GameMode[] = ['simple', 'coin'];
+
+// The one place that knows which engine a mode means. Everything downstream
+// goes through the RoomEngine contract.
+function createEngine(mode: GameMode): RoomEngine {
+    return mode === 'coin' ? new CoinModeEngine() : new SimpleModeEngine();
+}
 export type DisconnectErrorType = 'PLAYER_IS_NOT_IN_A_ROOM' | 'ROOM_NOT_FOUND' | 'PLAYER_NOT_FOUND';
 export type UnknownErrorType = 'UNKNOWN_ERROR';
 
@@ -17,7 +27,7 @@ export interface RoomResult<TData = any, TError = string> {
 
 export interface CreateRoomResultData {
     roomCode: string;
-    players: PlayerModel[];
+    players: object[];
     gameMode: GameMode;
     hostId: string;
     playerId: string;
@@ -31,8 +41,8 @@ export type JoinOutcome = 'RECONNECT' | 'NEW_PLAYER' | 'NEW_SPECTATOR';
 export interface JoinRoomResultData {
     outcome: JoinOutcome;
     roomCode: string;
-    players: PlayerModel[];
-    spectators: SpectatorModel[];
+    players: object[];
+    spectators: object[];
     gameMode: GameMode;
     hostId: string;
     playerId: string;
@@ -51,9 +61,9 @@ export interface DisconnectResultData {
     action: 'DELETE_ROOM' | 'PLAYER_LEFT' | 'PLAYER_DISCONNECTED' | 'SPECTATOR_LEFT';
     roomCode?: string;
     room?: Room;
-    newLog?: ActionLog;
+    newLog?: RoomActionLog;
     playerId?: string;
-    spectators?: SpectatorModel[];
+    spectators?: object[];
 }
 
 const textSegmenter = new Intl.Segmenter('th-TH', { granularity: 'grapheme' });
@@ -86,28 +96,28 @@ class RoomService {
         return previousSocketId && previousSocketId !== socketId ? previousSocketId : undefined;
     }
 
-    static createRoom(socketId: string, playerName: string, gameMode: string = 'simple'): RoomResult<CreateRoomResultData, CreateRoomErrorType> {
+    static createRoom(socketId: string, playerName: string, requestedMode: string = 'simple'): RoomResult<CreateRoomResultData, CreateRoomErrorType> {
         try {
             if (!isValidName(playerName)) {
                 return { success: false, error: 'INVALID_PLAYER_NAME' };
             }
 
-            if (gameMode != 'simple') {
+            if (!SUPPORTED_MODES.includes(requestedMode as GameMode)) {
                 return { success: false, error: 'INVALID_MODE' };
             }
 
-            let roomCode = '';
-            do {
-                roomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
-            } while (activeRooms[roomCode] !== undefined);
+            const gameMode = requestedMode as GameMode;
 
-            const gameInstance = new SimpleModeEngine();
+            // The code leads with the mode, so a client can bind the right
+            // socket handlers from the code alone -- before it has asked us
+            // anything. See RoomCode.ts.
+            const roomCode = generateRoomCode(gameMode, code => activeRooms[code] !== undefined);
+            const gameInstance = createEngine(gameMode);
 
             const playerId = generatePlayerId();
             const secret = generateSecret();
 
-            const hostPlayer = new PlayerEntity(playerId, playerName, secret);
-            gameInstance.addPlayer(hostPlayer);
+            gameInstance.addNewPlayer(playerId, playerName, secret);
 
             activeRooms[roomCode] = {
                 code: roomCode,
@@ -217,7 +227,7 @@ class RoomService {
                     return { success: false, error: 'ROOM_IS_FULL_OF_SPECTATORS' };
                 }
             } else {
-                if (!room.game.addPlayer(new PlayerEntity(newPlayerId, trimmedName, newSecret))) {
+                if (!room.game.addNewPlayer(newPlayerId, trimmedName, newSecret)) {
                     return { success: false, error: 'ROOM_IS_FULL' };
                 }
             }
@@ -313,7 +323,7 @@ class RoomService {
             }
         }
 
-        const disconnectLog = room.game.addLog('PLAYER_DISCONNECTED', { playerName: player.name, playerId: player.id } as PlayerDisconnectedData);
+        const disconnectLog = room.game.logPlayerDisconnected(player.id, player.name);
 
         return { success: true, data: { action: 'PLAYER_DISCONNECTED', roomCode, room, newLog: disconnectLog, playerId } };
     }

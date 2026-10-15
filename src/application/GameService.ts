@@ -1,7 +1,7 @@
 import { SetPositionErrorType, SetBombErrorType, EngineEventData, ActionLog, PlayerModel, SpectatorModel, GameState, RankingModel } from '../domain/modes/SimpleModeEngine';
 import logger from '../utils/Logger';
 import ResponseUtil from '../utils/ResponseUtil';
-import { Room, activeRooms } from './RoomStore';
+import { SimpleRoom, getSimpleRoom } from './RoomStore';
 import { Server } from 'socket.io';
 
 export type GameActionErrorType = 'ROOM_NOT_FOUND' | SetPositionErrorType | SetBombErrorType;
@@ -65,20 +65,20 @@ class GameService {
     // The phase timer is always running and is the sole driver when nobody is
     // connected -- there is no paused state to resume from, so a reconnecting
     // client just picks up mid-countdown via `remainingMs`.
-    private static startPhaseTimer(room: Room, onExpiry: () => void) {
+    private static startPhaseTimer(room: SimpleRoom, onExpiry: () => void) {
         if (room.phaseTimer) clearTimeout(room.phaseTimer);
         room.phaseEndsAt = Date.now() + PHASE_TIME_LIMIT_MS;
         room.phaseTimer = setTimeout(onExpiry, PHASE_TIME_LIMIT_MS);
     }
 
-    private static clearPhaseTimer(room: Room) {
+    private static clearPhaseTimer(room: SimpleRoom) {
         if (room.phaseTimer) clearTimeout(room.phaseTimer);
         room.phaseTimer = null;
         room.phaseEndsAt = null;
     }
 
     static startPositionPhase(roomCode: string) {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return;
 
         room.game.state = 'position';
@@ -92,7 +92,7 @@ class GameService {
     // on the early-exit path it's exactly the disconnected-alive players, since
     // the gate already required every connected one to have positioned.
     static advanceToAttackPhase(roomCode: string) {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return;
 
         room.game.players.forEach(p => {
@@ -115,7 +115,7 @@ class GameService {
     }
 
     static startAttackPhase(roomCode: string) {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return;
 
         room.game.state = 'attack';
@@ -129,7 +129,7 @@ class GameService {
     }
 
     static processRound(roomCode: string) {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return;
 
         room.game.state = 'process';
@@ -188,7 +188,7 @@ class GameService {
     // end the game: a disconnect is not a death, so it can never be what
     // brings the alive count down to a winner.
     static checkGameProgression(roomCode: string) {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return;
 
         if (room.game.state === 'position' && room.game.haveAllPlayersPositioned()) {
@@ -206,7 +206,7 @@ class GameService {
     // USER-INITIATED ACTIONS (From the Gateway)
     // ==========================================
     static handleSetPosition(roomCode: string, playerId: string, x: number, y: number): GameResult<EngineEventData, GameActionErrorType> {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return { success: false, error: 'ROOM_NOT_FOUND' };
 
         const result = room.game.setPlayerPosition(playerId, x, y);
@@ -222,7 +222,7 @@ class GameService {
     }
 
     static handleThrowBomb(roomCode: string, playerId: string, x: number, y: number): GameResult<EngineEventData, GameActionErrorType> {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return { success: false, error: 'ROOM_NOT_FOUND' };
 
         const result = room.game.setPlayerBomb(playerId, x, y);
@@ -238,7 +238,7 @@ class GameService {
     }
 
     static handleResetGame(roomCode: string): GameResult<ResetGameResultData, ResetGameErrorType> {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return { success: false, error: 'ROOM_NOT_FOUND' };
 
         if (room.game.state !== 'end') return { success: false, error: 'WRONG_PHASE' };
@@ -281,7 +281,7 @@ class GameService {
     // SNAPSHOT (private, to a (re)entering socket)
     // ==========================================
     static buildRoomSnapshot(roomCode: string, playerId: string, isSpectator: boolean): RoomSnapshot | null {
-        const room = activeRooms[roomCode];
+        const room = getSimpleRoom(roomCode);
         if (!room) return null;
 
         const remainingMs = room.phaseEndsAt ? Math.max(0, room.phaseEndsAt - Date.now()) : 0;
